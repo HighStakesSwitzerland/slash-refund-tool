@@ -9,7 +9,6 @@ import {chains} from "chain-registry";
 import {Chain} from '@chain-registry/types';
 import {EncodeObject, encodePubkey, makeAuthInfoBytes, Registry, TxBodyEncodeObject} from "@cosmjs/proto-signing";
 import {SignMode} from "cosmjs-types/cosmos/tx/signing/v1beta1/signing";
-import {MsgExecuteContract} from "cosmjs-types/cosmwasm/wasm/v1/tx";
 import {TxRaw} from "cosmjs-types/cosmos/tx/v1beta1/tx";
 import {fromBase64} from "@cosmjs/encoding";
 import {Tendermint37Client} from "@cosmjs/tendermint-rpc";
@@ -72,7 +71,7 @@ export class TransactionService {
 					return currentValue;
 				}
 				return currentValue + previousValue;
-		})} ${denom}`);
+			})} ${denom}`);
 
 		// create multisend message
 		const multiSendMsg: MsgMultiSend = {
@@ -83,33 +82,33 @@ export class TransactionService {
 			typeUrl: "/cosmos.bank.v1beta1.MsgMultiSend",
 			value: MsgMultiSend.fromPartial(multiSendMsg),
 		});
-		const msgs = this.aminoTypes.toAmino(message);
-		// set memo on message to sign as converter removes it
-		msgs.value.memo = "Slashing reimbursement from High Stakes 🇨🇭validator team";
+		const aminoMsg = this.aminoTypes.toAmino(message);
 
 		// simulate to get gas estimation
 		const gasUsed = await signingClient.simulate(signerAddress, [message], "");
+		const fees = Math.trunc(registryChain.fees.fee_tokens[0].high_gas_price * gasUsed / 10) + 200;
+		const gasToUse = new IntPretty(new Dec(gasUsed).mul(new Dec(1.4)))
+			.maxDecimals(0)
+			.locale(false)
+			.toString()
 		const feeAmount: StdFee = {
-			amount: coins(0, denom),
-			gas: new IntPretty(new Dec(gasUsed).mul(new Dec(1.3)))
-				.maxDecimals(0)
-				.locale(false)
-				.toString()
+			amount: coins(3000, denom),
+			gas: gasToUse
 		};
 
 		this._logger.log(`Calculated fees ${feeAmount.amount[0].amount} ${denom} and gas ${feeAmount.gas}`)
 
 		const signDoc = makeSignDoc(
-			[msgs],
+			[aminoMsg],
 			feeAmount,
 			registryChain.chain_id,
-			"",
+			"Slashing reimbursement from High Stakes 🇨🇭",
 			accountNumber,
 			sequence,
 		);
 
 		// sign message
-		const txBytes = await this.signMessage(signer, signerAddress, signDoc, message, pubkey, gasUsed.toString());
+		const txBytes = await this.signMessage(signer, signerAddress, signDoc, message, pubkey, gasToUse);
 		// broadcast message
 		const tx = await signingClient.broadcastTx(txBytes);
 		this._logger.log(`Sent MultiSendMsg for ${wallets.length} wallets with hash ${tx.transactionHash}`);
@@ -143,17 +142,12 @@ export class TransactionService {
 			messages: signed.msgs.map((msg) => this.aminoTypes.fromAmino(msg)),
 			memo: signed.memo,
 		};
-		signedTxBody.messages[0].value.memo = message.value.memo;
 		const signedTxBodyEncodeObject: TxBodyEncodeObject = {
 			typeUrl: "/cosmos.tx.v1beta1.TxBody",
 			value: signedTxBody,
 		};
+		//signedTxBodyEncodeObject.value.memo = signDoc.memo
 		const registry = new Registry(defaultRegistryTypes);
-		registry.register(
-			"/cosmwasm.wasm.v1.MsgExecuteContract",
-			// @ts-ignore
-			MsgExecuteContract,
-		);
 		const signedTxBodyBytes = registry.encode(signedTxBodyEncodeObject);
 		const signedSequence = Int53.fromString(signed.sequence).toNumber();
 		const signedAuthInfoBytes = makeAuthInfoBytes(

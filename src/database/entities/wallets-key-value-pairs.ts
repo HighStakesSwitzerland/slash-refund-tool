@@ -1,4 +1,4 @@
-import {Column, Entity, Index, PrimaryColumn} from "typeorm";
+import {Column, Entity, PrimaryColumn} from "typeorm";
 
 /**
  * Update table name below
